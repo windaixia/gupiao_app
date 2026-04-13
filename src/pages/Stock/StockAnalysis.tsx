@@ -76,6 +76,61 @@ const truncateText = (value?: string | null, maxLength = 120) => {
   return `${normalized.slice(0, maxLength)}...`;
 };
 
+const formatSentimentScore = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.min(100, Number(value.toFixed(1))));
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.min(100, Number(parsed.toFixed(1))));
+    }
+  }
+  return 0;
+};
+
+const formatTechnicalLevels = (value: unknown) => {
+  if (Array.isArray(value)) {
+    const normalized = value
+      .map((item) => {
+        if (typeof item === 'number' && Number.isFinite(item)) {
+          return `¥${formatMoney(item)}`;
+        }
+        if (typeof item === 'string' && item.trim()) {
+          const parsed = Number(item);
+          return Number.isFinite(parsed) ? `¥${formatMoney(parsed)}` : item.trim();
+        }
+        if (item && typeof item === 'object') {
+          const level = 'level' in item ? (item as { level?: unknown }).level : undefined;
+          const note = 'note' in item ? (item as { note?: unknown }).note : undefined;
+          const levelLabel =
+            typeof level === 'number' && Number.isFinite(level)
+              ? `¥${formatMoney(level)}`
+              : typeof level === 'string' && level.trim()
+                ? level.trim()
+                : '';
+          const noteLabel = typeof note === 'string' && note.trim() ? `（${note.trim()}）` : '';
+          return `${levelLabel}${noteLabel}`.trim();
+        }
+        return '';
+      })
+      .filter(Boolean);
+
+    return normalized.length > 0 ? normalized.slice(0, 3).join('，') : '暂无';
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return `¥${formatMoney(value)}`;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? `¥${formatMoney(parsed)}` : value.trim();
+  }
+
+  return '暂无';
+};
+
 type ChartMode = 'intraday1m' | 'intraday5m' | 'trend30' | 'dailyK' | 'weeklyK';
 type ChartRange = 30 | 60 | 120 | 250;
 
@@ -275,6 +330,7 @@ export default function StockAnalysis() {
   const [aiLoading, setAiLoading] = useState(false);
   const [quickCommentLoading, setQuickCommentLoading] = useState(false);
   const [eventRefreshLoading, setEventRefreshLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
   const [chartMode, setChartMode] = useState<ChartMode>(() =>
     typeof window === 'undefined' ? 'intraday1m' : normalizeChartMode(window.localStorage.getItem(CHART_MODE_STORAGE_KEY)),
@@ -366,6 +422,7 @@ export default function StockAnalysis() {
     setAnalysisPerformance(null);
     setQuickComment(null);
     setEventSignals(null);
+    setAiError('');
     fetchStockData(code, false);
     fetchQuickComment(code);
 
@@ -538,6 +595,7 @@ export default function StockAnalysis() {
   const handleAiAnalysis = async () => {
     if (!code) return;
     setAiLoading(true);
+    setAiError('');
     try {
       const response = await fetch('/api/stock/analysis', {
         method: 'POST',
@@ -557,9 +615,12 @@ export default function StockAnalysis() {
             caution: data.analysis?.reasoning?.riskFactors?.[0] || '请结合风险承受能力审慎决策。',
           });
         }
+      } else {
+        setAiError(data.error || 'AI 分析暂时不可用，请稍后重试。');
       }
     } catch (error) {
       console.error('AI analysis failed', error);
+      setAiError('AI 分析请求失败，请稍后重试。');
     } finally {
       setAiLoading(false);
     }
@@ -1239,6 +1300,12 @@ export default function StockAnalysis() {
         </div>
       )}
 
+      {aiError && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm">
+          {aiError}
+        </div>
+      )}
+
       {aiReport && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="bg-gradient-to-r from-blue-900 to-indigo-900 rounded-2xl p-8 text-white shadow-lg">
@@ -1618,11 +1685,11 @@ export default function StockAnalysis() {
                 </div>
                 <div className="flex justify-between border-b border-slate-50 pb-2">
                   <span className="text-slate-500">支撑位</span>
-                  <span className="font-medium text-slate-900">¥{aiReport.technical.support}</span>
+                  <span className="max-w-[70%] text-right font-medium text-slate-900">{formatTechnicalLevels(aiReport.technical.support)}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-50 pb-2">
                   <span className="text-slate-500">阻力位</span>
-                  <span className="font-medium text-slate-900">¥{aiReport.technical.resistance}</span>
+                  <span className="max-w-[70%] text-right font-medium text-slate-900">{formatTechnicalLevels(aiReport.technical.resistance)}</span>
                 </div>
               </div>
               <p className="text-sm text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg">{aiReport.technical.summary}</p>
@@ -1742,18 +1809,18 @@ export default function StockAnalysis() {
                   <span className="text-slate-500">新闻得分</span>
                   <div className="flex items-center gap-2">
                     <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-purple-500" style={{ width: `${aiReport.sentiment.newsScore}%` }} />
+                      <div className="h-full bg-purple-500" style={{ width: `${formatSentimentScore(aiReport.sentiment.newsScore)}%` }} />
                     </div>
-                    <span className="font-medium text-slate-900 text-sm">{aiReport.sentiment.newsScore}</span>
+                    <span className="font-medium text-slate-900 text-sm">{formatSentimentScore(aiReport.sentiment.newsScore)}</span>
                   </div>
                 </div>
                 <div className="flex justify-between items-center border-b border-slate-50 pb-2">
                   <span className="text-slate-500">社交得分</span>
                   <div className="flex items-center gap-2">
                     <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500" style={{ width: `${aiReport.sentiment.socialScore}%` }} />
+                      <div className="h-full bg-blue-500" style={{ width: `${formatSentimentScore(aiReport.sentiment.socialScore)}%` }} />
                     </div>
-                    <span className="font-medium text-slate-900 text-sm">{aiReport.sentiment.socialScore}</span>
+                    <span className="font-medium text-slate-900 text-sm">{formatSentimentScore(aiReport.sentiment.socialScore)}</span>
                   </div>
                 </div>
               </div>
