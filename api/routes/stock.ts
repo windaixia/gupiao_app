@@ -164,7 +164,16 @@ const toNumberOrNull = (value: unknown) => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const fetchEastmoneyBufferOnce = async (url: string, timeoutMs = 10000) =>
+const resolveRedirectUrl = (currentUrl: string, location: string) => {
+  if (!location) return currentUrl;
+  if (location.startsWith('//')) {
+    const current = new URL(currentUrl);
+    return `${current.protocol}${location}`;
+  }
+  return new URL(location, currentUrl).toString();
+};
+
+const fetchEastmoneyBufferOnce = async (url: string, timeoutMs = 10000, redirectCount = 0) =>
   new Promise<Buffer>((resolve, reject) => {
     const request = https.get(
       url,
@@ -175,6 +184,25 @@ const fetchEastmoneyBufferOnce = async (url: string, timeoutMs = 10000) =>
         },
       },
       (response) => {
+        const location = response.headers.location;
+        if (
+          location &&
+          response.statusCode &&
+          [301, 302, 303, 307, 308].includes(response.statusCode)
+        ) {
+          if (redirectCount >= 3) {
+            reject(new Error(`Too many Eastmoney redirects for ${url}`));
+            response.resume();
+            return;
+          }
+
+          response.resume();
+          fetchEastmoneyBufferOnce(resolveRedirectUrl(url, location), timeoutMs, redirectCount + 1)
+            .then(resolve)
+            .catch(reject);
+          return;
+        }
+
         if (!response.statusCode || response.statusCode >= 400) {
           reject(new Error(`Failed to fetch Eastmoney data: ${response.statusCode || 'unknown'}`));
           response.resume();
@@ -236,6 +264,7 @@ const fetchHttpBufferOnce = async (
   url: string,
   headers: Record<string, string>,
   timeoutMs = 3000,
+  redirectCount = 0,
 ) =>
   new Promise<Buffer>((resolve, reject) => {
     const request = https.get(
@@ -244,6 +273,25 @@ const fetchHttpBufferOnce = async (
         headers,
       },
       (response) => {
+        const location = response.headers.location;
+        if (
+          location &&
+          response.statusCode &&
+          [301, 302, 303, 307, 308].includes(response.statusCode)
+        ) {
+          if (redirectCount >= 3) {
+            reject(new Error(`Too many redirects for ${url}`));
+            response.resume();
+            return;
+          }
+
+          response.resume();
+          fetchHttpBufferOnce(resolveRedirectUrl(url, location), headers, timeoutMs, redirectCount + 1)
+            .then(resolve)
+            .catch(reject);
+          return;
+        }
+
         if (!response.statusCode || response.statusCode >= 400) {
           reject(new Error(`Failed to fetch remote data: ${response.statusCode || 'unknown'}`));
           response.resume();
