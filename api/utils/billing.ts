@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import { supabase } from './supabase.js';
 
-export type UserPlan = 'free' | 'basic' | 'premium' | 'professional';
-export type PaymentChannel = 'qq' | 'wechat' | 'alipay' | 'manual';
+export type UserPlan = 'free' | 'basic' | 'premium';
+export type PaymentChannel = 'qq';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -25,35 +25,28 @@ export const PLAN_DEFINITIONS: Record<
   },
   basic: {
     label: '基础会员',
-    priceMonthly: 9.9,
+    priceMonthly: 149,
     aiDailyLimit: 10,
     watchlistLimit: 20,
     features: ['每日 10 次 AI 分析', '最多 20 支自选股', '适合轻度使用'],
   },
   premium: {
     label: '高级会员',
-    priceMonthly: 29,
+    priceMonthly: 199,
     aiDailyLimit: null,
     watchlistLimit: null,
     features: ['不限次 AI 分析', '不限自选股', '分析历史与深度报告'],
-  },
-  professional: {
-    label: '专业会员',
-    priceMonthly: 99,
-    aiDailyLimit: null,
-    watchlistLimit: null,
-    features: ['包含高级版全部权益', '人工优先支持', '可扩展为 API/报告服务'],
   },
 };
 
 export const PAYMENT_CHANNEL_LABELS: Record<PaymentChannel, string> = {
   qq: 'QQ 联系开通',
-  wechat: '微信',
-  alipay: '支付宝',
-  manual: '人工转账',
 };
 
 export const normalizeUserPlan = (plan?: string | null): UserPlan => {
+  if (plan === 'professional') {
+    return 'premium';
+  }
   if (plan && plan in PLAN_DEFINITIONS) {
     return plan as UserPlan;
   }
@@ -64,8 +57,6 @@ export const getPlanDefinition = (plan?: string | null) => PLAN_DEFINITIONS[norm
 
 export const getBillingContacts = () => ({
   qq: process.env.BILLING_CONTACT_QQ || '请在服务器环境变量中设置 BILLING_CONTACT_QQ',
-  wechat: process.env.BILLING_CONTACT_WECHAT || '请在服务器环境变量中设置 BILLING_CONTACT_WECHAT',
-  alipay: process.env.BILLING_CONTACT_ALIPAY || '请在服务器环境变量中设置 BILLING_CONTACT_ALIPAY',
   note:
     process.env.BILLING_CONTACT_NOTE ||
     '创建订单后请添加站长 QQ，备注订单号并完成转账，人工确认后开通会员。',

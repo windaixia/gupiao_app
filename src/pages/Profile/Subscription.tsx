@@ -3,8 +3,8 @@ import { useAuthStore } from '@/store/authStore';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Copy, Crown, QrCode, ShieldCheck, Sparkles } from 'lucide-react';
 
-type PlanKey = 'free' | 'basic' | 'premium' | 'professional';
-type ChannelKey = 'qq' | 'wechat' | 'alipay' | 'manual';
+type PlanKey = 'free' | 'basic' | 'premium';
+type ChannelKey = 'qq';
 
 interface PlanDefinition {
   key: PlanKey;
@@ -39,9 +39,6 @@ interface PaymentOrder {
 
 const channelLabels: Record<ChannelKey, string> = {
   qq: 'QQ 联系开通',
-  wechat: '微信收款',
-  alipay: '支付宝收款',
-  manual: '人工转账',
 };
 
 const statusLabels: Record<string, string> = {
@@ -64,7 +61,7 @@ export default function Subscription() {
   const [plans, setPlans] = useState<PlanDefinition[]>([]);
   const [aiQuota, setAiQuota] = useState<AiQuotaSummary | null>(null);
   const [orders, setOrders] = useState<PaymentOrder[]>([]);
-  const [contacts, setContacts] = useState<{ qq?: string; wechat?: string; alipay?: string; note?: string }>({});
+  const [contacts, setContacts] = useState<{ qq?: string; note?: string }>({});
   const [activePlan, setActivePlan] = useState<PlanKey>((user?.plan as PlanKey) || 'free');
 
   if (!user) {
@@ -196,7 +193,7 @@ export default function Subscription() {
 
       <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
         <div className="space-y-6">
-          <div className="grid gap-6 md:grid-cols-3">
+          <div className="grid gap-6 md:grid-cols-2">
             {plans.map((plan) => {
               const isCurrent = activePlan === plan.key;
               const highlighted = plan.key === 'premium';
@@ -263,8 +260,8 @@ export default function Subscription() {
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-3">
-              {(['qq', 'wechat', 'alipay', 'manual'] as ChannelKey[]).map((channel) => (
+            <div className="grid gap-4">
+              {(['qq'] as ChannelKey[]).map((channel) => (
                 <button
                   key={channel}
                   type="button"
@@ -277,13 +274,7 @@ export default function Subscription() {
                 >
                   <p className="font-semibold text-slate-900">{channelLabels[channel]}</p>
                   <p className="mt-2 text-sm text-slate-500">
-                    {channel === 'qq'
-                      ? '推荐先加 QQ，沟通套餐与付款后人工开通。'
-                      : channel === 'wechat'
-                      ? '推荐微信转账，备注订单号。'
-                      : channel === 'alipay'
-                        ? '支持支付宝手动付款。'
-                        : '支持线下或人工沟通转账。'}
+                    推荐先加 QQ，沟通套餐与付款后人工开通。
                   </p>
                 </button>
               ))}
@@ -321,15 +312,7 @@ export default function Subscription() {
                 <button
                   type="button"
                   onClick={() =>
-                    handleCopy(
-                      selectedChannel === 'qq'
-                        ? contacts.qq
-                        : selectedChannel === 'wechat'
-                          ? contacts.wechat
-                          : selectedChannel === 'alipay'
-                            ? contacts.alipay
-                            : contacts.qq,
-                    )
+                    handleCopy(contacts.qq)
                   }
                   className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 font-medium text-blue-700 shadow-sm"
                 >
@@ -338,8 +321,6 @@ export default function Subscription() {
                 </button>
               </div>
               <p>站长 QQ：{contacts.qq || '待配置'}</p>
-              <p>微信收款：{contacts.wechat || '待配置'}</p>
-              <p>支付宝收款：{contacts.alipay || '待配置'}</p>
               <p className="text-blue-700">{contacts.note || '创建订单后请把订单号作为付款备注。'}</p>
             </div>
 

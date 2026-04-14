@@ -114,12 +114,12 @@ router.post('/order', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (!['basic', 'premium', 'professional'].includes(plan)) {
+    if (!['basic', 'premium'].includes(plan)) {
       res.status(400).json({ error: 'Unsupported plan' });
       return;
     }
 
-    if (!['qq', 'wechat', 'alipay', 'manual'].includes(channel)) {
+    if (channel !== 'qq') {
       res.status(400).json({ error: 'Unsupported channel' });
       return;
     }
@@ -172,7 +172,7 @@ router.post('/upgrade', async (req: Request, res: Response): Promise<void> => {
     endDate.setMonth(endDate.getMonth() + 1); // 1 month subscription
 
     // Mock payment processing here
-    const amount = plan === 'professional' ? 99.00 : (plan === 'premium' ? 29.00 : 0);
+    const amount = plan === 'premium' ? 199.0 : 149.0;
 
     const { data, error } = await supabase
       .from('subscriptions')
