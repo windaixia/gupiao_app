@@ -19,12 +19,49 @@ const MOCK_MARKET_OVERVIEW = [
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const navigate = useNavigate();
 
-  const handleSearch = (e: React.FormEvent) => {
+  const prefetchStockSnapshot = (code: string) => {
+    void fetch(`/api/stock/${encodeURIComponent(code)}`).catch((error) => {
+      console.error('Prefetch stock snapshot failed', error);
+    });
+  };
+
+  const goToStock = async (input: string, fallbackCode?: string) => {
+    const normalizedInput = input.trim();
+    if (!normalizedInput) return;
+
+    setSearching(true);
+    setSearchError('');
+    try {
+      const response = await fetch(`/api/stock/resolve?q=${encodeURIComponent(normalizedInput)}`);
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || '无法识别该股票');
+      }
+
+      const resolvedCode = data.stock?.code || fallbackCode || normalizedInput.toUpperCase();
+      prefetchStockSnapshot(resolvedCode);
+      navigate(`/stock/${resolvedCode}`);
+    } catch (error) {
+      if (fallbackCode) {
+        prefetchStockSnapshot(fallbackCode);
+        navigate(`/stock/${fallbackCode}`);
+        return;
+      }
+      console.error('Resolve stock failed', error);
+      setSearchError(error instanceof Error ? error.message : '未找到对应股票，请换个代码或名称试试');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      navigate(`/stock/${searchQuery.trim().toUpperCase()}`);
+      await goToStock(searchQuery);
     }
   };
 
@@ -47,15 +84,18 @@ export default function Home() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="输入股票代码或名称 (如 600519、000001、贵州茅台)..."
+              disabled={searching}
               className="w-full pl-14 pr-32 py-4 rounded-full border-2 border-slate-200 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/20 text-lg transition-all"
             />
             <button
               type="submit"
+              disabled={searching}
               className="absolute right-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-full font-medium transition-colors"
             >
-              分析
+              {searching ? '查找中...' : '分析'}
             </button>
           </div>
+          {searchError && <p className="mt-3 text-sm text-red-500">{searchError}</p>}
         </form>
       </div>
 
@@ -101,7 +141,7 @@ export default function Home() {
             {MOCK_HOT_STOCKS.map((stock) => (
               <div 
                 key={stock.code} 
-                onClick={() => navigate(`/stock/${stock.code}`)}
+                onClick={() => void goToStock(stock.code, stock.code)}
                 className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer flex justify-between items-center group"
               >
                 <div>

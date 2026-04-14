@@ -3044,6 +3044,32 @@ router.get('/analysis/review-center/:userId', async (req: Request, res: Response
   }
 });
 
+router.get('/resolve', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const input = String(req.query.q || req.query.code || '').trim();
+
+    if (!input) {
+      res.status(400).json({ error: 'Stock input is required' });
+      return;
+    }
+
+    const code = await resolveStockInput(input);
+    const name = findStockNameByCode(code);
+
+    res.status(200).json({
+      success: true,
+      stock: {
+        input,
+        code,
+        name,
+      },
+    });
+  } catch (error) {
+    console.error('Resolve Stock Error:', error);
+    res.status(404).json({ error: '无法识别该股票代码或名称' });
+  }
+});
+
 router.get('/:code', async (req: Request, res: Response): Promise<void> => {
   try {
     const { code } = req.params;
