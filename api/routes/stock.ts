@@ -964,6 +964,98 @@ const parseEastmoneyKlines = (klines: string[] = []) =>
     changeAmount: number | null;
   }>;
 
+const getShanghaiDateKey = (now = new Date()) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+
+const isShanghaiWeekend = (now = new Date()) => {
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    weekday: 'short',
+  }).format(now);
+  return weekday === 'Sat' || weekday === 'Sun';
+};
+
+const mergeRealtimeDailyBar = (
+  dailySeries: Array<{
+    date: string;
+    open: number | null;
+    close: number;
+    high: number | null;
+    low: number | null;
+    volume: number;
+    amount: number | null;
+    amplitude: number | null;
+    changePercent: number | null;
+    changeAmount: number | null;
+  }>,
+  quote: {
+    regularMarketPrice?: number | null;
+    regularMarketOpen?: number | null;
+    regularMarketDayHigh?: number | null;
+    regularMarketDayLow?: number | null;
+    regularMarketVolume?: number | null;
+    regularMarketPreviousClose?: number | null;
+    marketState?: string;
+  },
+) => {
+  const today = getShanghaiDateKey();
+  const currentPrice = toNumberOrNull(quote.regularMarketPrice);
+  const open = toNumberOrNull(quote.regularMarketOpen) ?? currentPrice;
+  const high = toNumberOrNull(quote.regularMarketDayHigh) ?? currentPrice;
+  const low = toNumberOrNull(quote.regularMarketDayLow) ?? currentPrice;
+  const volume = Math.max(0, Number(quote.regularMarketVolume ?? 0));
+  const previousClose = toNumberOrNull(quote.regularMarketPreviousClose);
+
+  if (quote.marketState === 'PRE' || quote.marketState === 'PREPRE') {
+    return dailySeries;
+  }
+
+  if (currentPrice == null || open == null || high == null || low == null) {
+    return dailySeries;
+  }
+
+  const mergedBar = {
+    date: today,
+    open,
+    close: currentPrice,
+    high: Math.max(high, open, currentPrice),
+    low: Math.min(low, open, currentPrice),
+    volume,
+    amount: null,
+    amplitude:
+      previousClose && previousClose > 0
+        ? Number((((Math.max(high, currentPrice) - Math.min(low, currentPrice)) / previousClose) * 100).toFixed(2))
+        : null,
+    changePercent:
+      previousClose && previousClose > 0
+        ? Number((((currentPrice - previousClose) / previousClose) * 100).toFixed(2))
+        : null,
+    changeAmount:
+      previousClose != null ? Number((currentPrice - previousClose).toFixed(2)) : null,
+  };
+
+  const lastIndex = dailySeries.length - 1;
+  if (lastIndex >= 0 && dailySeries[lastIndex]?.date === today) {
+    dailySeries[lastIndex] = {
+      ...dailySeries[lastIndex],
+      ...mergedBar,
+      volume: Math.max(dailySeries[lastIndex].volume ?? 0, mergedBar.volume),
+    };
+    return dailySeries;
+  }
+
+  if (isShanghaiWeekend()) {
+    return dailySeries;
+  }
+
+  return [...dailySeries, mergedBar];
+};
+
 const BACKTEST_PERIODS = [1, 3, 5, 20] as const;
 
 const PEER_GROUPS: Record<string, string[]> = {
@@ -2614,8 +2706,6 @@ const fetchStockSnapshot = async (rawCode: string) => {
     const upperLimit = Number((previousClose * (1 + limitPercent)).toFixed(2));
     const lowerLimit = Number((previousClose * (1 - limitPercent)).toFixed(2));
     const marketState = getAshareMarketState();
-    const recentDailySeries = dailySeries.slice(-30);
-    const yearSeries = dailySeries.slice(-250);
     const regularMarketPrice = toNumberOrNull(quoteData?.f43) ?? fallbackQuote?.regularMarketPrice ?? dailySeries[dailySeries.length - 1]?.close ?? 0;
     const rawTrailingPE = toNumberOrNull(quoteData?.f115) ?? toNumberOrNull(quoteData?.f9) ?? toNumberOrNull(quoteData?.f114);
     const industryName = cleanAshareText(quoteData?.f100) || cleanAshareText(quoteData?.f127) || null;
@@ -2660,26 +2750,31 @@ const fetchStockSnapshot = async (rawCode: string) => {
       regularMarketDayLow: toNumberOrNull(quoteData?.f45) ?? fallbackQuote?.regularMarketDayLow ?? dailySeries[dailySeries.length - 1]?.low,
       regularMarketPreviousClose: previousClose,
       marketState,
-      fiftyTwoWeekHigh:
-        yearSeries.length > 0
-          ? Number(
-              Math.max(
-                ...yearSeries.map((item) => item.high ?? item.close),
-              ).toFixed(2),
-            )
-          : null,
-      fiftyTwoWeekLow:
-        yearSeries.length > 0
-          ? Number(
-              Math.min(
-                ...yearSeries.map((item) => item.low ?? item.close),
-              ).toFixed(2),
-            )
-          : null,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
       trailingPE,
       epsTrailingTwelveMonths,
       priceToBook,
     };
+    dailySeries = mergeRealtimeDailyBar(dailySeries, quote);
+    const recentDailySeries = dailySeries.slice(-30);
+    const yearSeries = dailySeries.slice(-250);
+    quote.fiftyTwoWeekHigh =
+      yearSeries.length > 0
+        ? Number(
+            Math.max(
+              ...yearSeries.map((item) => item.high ?? item.close),
+            ).toFixed(2),
+          )
+        : null;
+    quote.fiftyTwoWeekLow =
+      yearSeries.length > 0
+        ? Number(
+            Math.min(
+              ...yearSeries.map((item) => item.low ?? item.close),
+            ).toFixed(2),
+          )
+        : null;
     const intraday1m = trendPoints.map(({ time, price, volume }) => ({ time, price, volume }));
     const intraday5m = aggregateIntradayPoints(intraday1m, 5);
 
