@@ -119,7 +119,7 @@ router.post('/order', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (!['wechat', 'alipay', 'manual'].includes(channel)) {
+    if (!['qq', 'wechat', 'alipay', 'manual'].includes(channel)) {
       res.status(400).json({ error: 'Unsupported channel' });
       return;
     }

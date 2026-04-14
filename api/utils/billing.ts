@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { supabase } from './supabase.js';
 
 export type UserPlan = 'free' | 'basic' | 'premium' | 'professional';
-export type PaymentChannel = 'wechat' | 'alipay' | 'manual';
+export type PaymentChannel = 'qq' | 'wechat' | 'alipay' | 'manual';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -47,6 +47,7 @@ export const PLAN_DEFINITIONS: Record<
 };
 
 export const PAYMENT_CHANNEL_LABELS: Record<PaymentChannel, string> = {
+  qq: 'QQ 联系开通',
   wechat: '微信',
   alipay: '支付宝',
   manual: '人工转账',
@@ -62,11 +63,12 @@ export const normalizeUserPlan = (plan?: string | null): UserPlan => {
 export const getPlanDefinition = (plan?: string | null) => PLAN_DEFINITIONS[normalizeUserPlan(plan)];
 
 export const getBillingContacts = () => ({
+  qq: process.env.BILLING_CONTACT_QQ || '请在服务器环境变量中设置 BILLING_CONTACT_QQ',
   wechat: process.env.BILLING_CONTACT_WECHAT || '请在服务器环境变量中设置 BILLING_CONTACT_WECHAT',
   alipay: process.env.BILLING_CONTACT_ALIPAY || '请在服务器环境变量中设置 BILLING_CONTACT_ALIPAY',
   note:
     process.env.BILLING_CONTACT_NOTE ||
-    '下单后请完成支付，并将订单号与付款备注发给站长人工确认开通。',
+    '创建订单后请添加站长 QQ，备注订单号并完成转账，人工确认后开通会员。',
 });
 
 const getBeijingDayRange = () => {

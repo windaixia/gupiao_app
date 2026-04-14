@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { CheckCircle2, Copy, Crown, QrCode, ShieldCheck, Sparkles } from 'lucide-react';
 
 type PlanKey = 'free' | 'basic' | 'premium' | 'professional';
-type ChannelKey = 'wechat' | 'alipay' | 'manual';
+type ChannelKey = 'qq' | 'wechat' | 'alipay' | 'manual';
 
 interface PlanDefinition {
   key: PlanKey;
@@ -38,6 +38,7 @@ interface PaymentOrder {
 }
 
 const channelLabels: Record<ChannelKey, string> = {
+  qq: 'QQ 联系开通',
   wechat: '微信收款',
   alipay: '支付宝收款',
   manual: '人工转账',
@@ -56,14 +57,14 @@ export default function Subscription() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
-  const [selectedChannel, setSelectedChannel] = useState<ChannelKey>('wechat');
+  const [selectedChannel, setSelectedChannel] = useState<ChannelKey>('qq');
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>('premium');
   const [payerName, setPayerName] = useState('');
   const [note, setNote] = useState('');
   const [plans, setPlans] = useState<PlanDefinition[]>([]);
   const [aiQuota, setAiQuota] = useState<AiQuotaSummary | null>(null);
   const [orders, setOrders] = useState<PaymentOrder[]>([]);
-  const [contacts, setContacts] = useState<{ wechat?: string; alipay?: string; note?: string }>({});
+  const [contacts, setContacts] = useState<{ qq?: string; wechat?: string; alipay?: string; note?: string }>({});
   const [activePlan, setActivePlan] = useState<PlanKey>((user?.plan as PlanKey) || 'free');
 
   if (!user) {
@@ -129,7 +130,7 @@ export default function Subscription() {
       const data = await response.json();
       if (response.ok && data.success) {
         setSuccess(
-          `订单 ${data.order.order_no} 已创建，请按页面提示完成${channelLabels[selectedChannel]}并等待人工确认开通。`,
+          `订单 ${data.order.order_no} 已创建，请按页面提示通过${channelLabels[selectedChannel]}联系你并等待人工确认开通。`,
         );
         setNote('');
         await loadSummary();
@@ -148,10 +149,10 @@ export default function Subscription() {
     if (!value) return;
     try {
       await navigator.clipboard.writeText(value);
-      setSuccess('收款账号已复制，请在付款备注里填写订单号。');
+      setSuccess('联系方式已复制，请备注订单号后联系开通。');
     } catch (copyError) {
       console.error('Copy failed', copyError);
-      setError('复制失败，请手动记录收款账号。');
+      setError('复制失败，请手动记录联系方式。');
     }
   };
 
@@ -166,7 +167,7 @@ export default function Subscription() {
             </div>
             <h1 className="text-3xl font-bold">会员中心与人工收款</h1>
             <p className="max-w-2xl text-sm text-slate-200">
-              先用手动收款把收费闭环跑通：用户创建订单 {'->'} 按微信/支付宝付款 {'->'} 人工确认后开通会员。
+              先用最轻量的人工闭环跑通收费：用户创建订单 {'->'} 添加站长 QQ {'->'} QQ 转账并备注订单号 {'->'} 人工确认开通会员。
             </p>
           </div>
           <div className="rounded-2xl bg-white/10 p-5 text-sm leading-7">
@@ -258,12 +259,12 @@ export default function Subscription() {
               <QrCode className="h-6 w-6 text-blue-600" />
               <div>
                 <h2 className="text-xl font-bold text-slate-900">创建付款订单</h2>
-                <p className="text-sm text-slate-500">先生成订单号，再用微信/支付宝完成转账，最后人工审核开通。</p>
+                <p className="text-sm text-slate-500">先生成订单号，再添加站长 QQ 完成转账，最后人工审核开通。</p>
               </div>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
-              {(['wechat', 'alipay', 'manual'] as ChannelKey[]).map((channel) => (
+              {(['qq', 'wechat', 'alipay', 'manual'] as ChannelKey[]).map((channel) => (
                 <button
                   key={channel}
                   type="button"
@@ -276,7 +277,9 @@ export default function Subscription() {
                 >
                   <p className="font-semibold text-slate-900">{channelLabels[channel]}</p>
                   <p className="mt-2 text-sm text-slate-500">
-                    {channel === 'wechat'
+                    {channel === 'qq'
+                      ? '推荐先加 QQ，沟通套餐与付款后人工开通。'
+                      : channel === 'wechat'
                       ? '推荐微信转账，备注订单号。'
                       : channel === 'alipay'
                         ? '支持支付宝手动付款。'
@@ -293,7 +296,7 @@ export default function Subscription() {
                   type="text"
                   value={payerName}
                   onChange={(event) => setPayerName(event.target.value)}
-                  placeholder="例如：张三 / 微信昵称"
+                  placeholder="例如：张三 / QQ 昵称"
                   className="w-full rounded-xl border border-slate-300 px-4 py-2.5 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               </label>
@@ -317,13 +320,24 @@ export default function Subscription() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleCopy(selectedChannel === 'wechat' ? contacts.wechat : contacts.alipay)}
+                  onClick={() =>
+                    handleCopy(
+                      selectedChannel === 'qq'
+                        ? contacts.qq
+                        : selectedChannel === 'wechat'
+                          ? contacts.wechat
+                          : selectedChannel === 'alipay'
+                            ? contacts.alipay
+                            : contacts.qq,
+                    )
+                  }
                   className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 font-medium text-blue-700 shadow-sm"
                 >
                   <Copy className="h-4 w-4" />
-                  复制收款账号
+                  复制联系方式
                 </button>
               </div>
+              <p>站长 QQ：{contacts.qq || '待配置'}</p>
               <p>微信收款：{contacts.wechat || '待配置'}</p>
               <p>支付宝收款：{contacts.alipay || '待配置'}</p>
               <p className="text-blue-700">{contacts.note || '创建订单后请把订单号作为付款备注。'}</p>
@@ -336,7 +350,7 @@ export default function Subscription() {
               className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Sparkles className="h-5 w-5" />
-              {loading ? '正在创建订单...' : '创建待付款订单'}
+              {loading ? '正在创建订单...' : '创建待联系订单'}
             </button>
           </div>
         </div>

@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS payment_orders (
   order_no VARCHAR(40) UNIQUE NOT NULL,
   plan_type VARCHAR(20) NOT NULL CHECK (plan_type IN ('basic', 'premium', 'professional')),
   amount DECIMAL(10,2) NOT NULL,
-  channel VARCHAR(20) NOT NULL CHECK (channel IN ('wechat', 'alipay', 'manual')),
+  channel VARCHAR(20) NOT NULL CHECK (channel IN ('qq', 'wechat', 'alipay', 'manual')),
   status VARCHAR(20) NOT NULL DEFAULT 'pending_review' CHECK (status IN ('pending_review', 'paid', 'cancelled', 'rejected')),
   payer_name VARCHAR(100),
   note TEXT,
