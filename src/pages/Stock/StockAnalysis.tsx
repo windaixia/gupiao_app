@@ -307,7 +307,7 @@ const KlineCrosshairLayer = ({ activeCoordinate, activePayload, offset, yAxisMap
 
 export default function StockAnalysis() {
   const { code } = useParams<{ code: string }>();
-  const { user } = useAuthStore();
+  const { user, setUser } = useAuthStore();
   const [aiQuota, setAiQuota] = useState<{
     planLabel?: string;
     dailyLimit?: number | null;
@@ -440,6 +440,30 @@ export default function StockAnalysis() {
 
     return () => window.clearInterval(timer);
   }, [code, user?.id]);
+
+  useEffect(() => {
+    const loadQuotaSummary = async () => {
+      if (!user?.id) {
+        setAiQuota(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/subscription/summary?userId=${encodeURIComponent(user.id)}`);
+        const data = await response.json();
+        if (response.ok && data.success) {
+          setAiQuota(data.aiQuota || null);
+          if (data.user) {
+            setUser({ ...user, ...data.user });
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch AI quota summary', error);
+      }
+    };
+
+    void loadQuotaSummary();
+  }, [setUser, user?.id]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -883,9 +907,13 @@ export default function StockAnalysis() {
                 当前套餐：{aiQuota?.planLabel || (user?.plan ? `${user.plan} 计划` : '游客')}
               </span>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
-                {aiQuota?.isUnlimited
-                  ? 'AI 分析不限次'
-                  : `今日 AI：${aiQuota?.usedToday || 0}/${aiQuota?.dailyLimit || 3}，剩余 ${aiQuota?.remainingToday ?? 3} 次`}
+                {!user
+                  ? '登录后可查看 AI 使用额度'
+                  : !aiQuota
+                    ? 'AI 额度加载中...'
+                    : aiQuota.isUnlimited
+                      ? 'AI 分析不限次'
+                      : `今日 AI：${aiQuota.usedToday || 0}/${aiQuota.dailyLimit || 0}，剩余 ${aiQuota.remainingToday ?? 0} 次`}
               </span>
               {user && !aiQuota?.isUnlimited && (
                 <Link to="/subscription" className="text-blue-600 hover:text-blue-700 font-medium">
