@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Copy, Crown, QrCode, ShieldCheck, Sparkles } from 'lucide-react';
+import { CheckCircle2, Copy, QrCode, ShieldCheck, Sparkles } from 'lucide-react';
 
 type PlanKey = 'free' | 'basic' | 'premium';
 type ChannelKey = 'qq';
@@ -158,13 +158,9 @@ export default function Subscription() {
       <div className="rounded-3xl bg-slate-900 px-8 py-10 text-white shadow-lg">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold tracking-wide text-blue-100">
-              <Crown className="h-4 w-4" />
-              收费能力已落地
-            </div>
-            <h1 className="text-3xl font-bold">会员中心与人工收款</h1>
+            <h1 className="text-3xl font-bold">会员中心</h1>
             <p className="max-w-2xl text-sm text-slate-200">
-              先用最轻量的人工闭环跑通收费：用户创建订单 {'->'} 添加站长 QQ {'->'} QQ 转账并备注订单号 {'->'} 人工确认开通会员。
+              开通会员后可获得更多 AI 分析次数与更高的使用额度。
             </p>
           </div>
           <div className="rounded-2xl bg-white/10 p-5 text-sm leading-7">
