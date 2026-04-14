@@ -99,12 +99,15 @@ const resolvedStockInputCache = new Map<string, { updatedAt: number; code: strin
 const resolvedStockNameCache = new Map<string, string>();
 const stockSnapshotCache = new Map<string, { updatedAt: number; snapshot: any }>();
 const stockSnapshotInflight = new Map<string, Promise<any>>();
+const stockEnrichmentCache = new Map<string, { updatedAt: number; details: any }>();
+const stockEnrichmentInflight = new Map<string, Promise<any>>();
 const stockCompanyProfileCache = new Map<string, { updatedAt: number; profile: any }>();
 const stockOperationsMetricsCache = new Map<string, { updatedAt: number; metrics: any }>();
 const stockFinancialReportCache = new Map<string, { updatedAt: number; reports: any[] }>();
 const RESOLVED_INPUT_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
-const SNAPSHOT_CACHE_TTL_MS = 15 * 1000;
-const SNAPSHOT_STALE_TTL_MS = 5 * 60 * 1000;
+const SNAPSHOT_CACHE_TTL_MS = 30 * 1000;
+const SNAPSHOT_STALE_TTL_MS = 10 * 60 * 1000;
+const ENRICHMENT_CACHE_TTL_MS = 30 * 60 * 1000;
 const COMPANY_PROFILE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const OPERATIONS_METRICS_CACHE_TTL_MS = 30 * 60 * 1000;
 const FINANCIAL_REPORT_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -2563,13 +2566,9 @@ const fetchStockSnapshot = async (rawCode: string) => {
     const recentDailySeries = dailySeries.slice(-30);
     const yearSeries = dailySeries.slice(-250);
     const regularMarketPrice = toNumberOrNull(quoteData?.f43) ?? fallbackQuote?.regularMarketPrice ?? dailySeries[dailySeries.length - 1]?.close ?? 0;
-    const companyProfile =
-      String(quoteData?.f127 || '').trim() && String(quoteData?.f128 || '').trim()
-        ? null
-        : await fetchEastmoneyCompanyProfile(code);
     const rawTrailingPE = toNumberOrNull(quoteData?.f115) ?? toNumberOrNull(quoteData?.f9) ?? toNumberOrNull(quoteData?.f114);
-    const industryName = cleanAshareText(quoteData?.f100) || cleanAshareText(quoteData?.f127) || companyProfile?.industryName || null;
-    const regionName = cleanAshareText(quoteData?.f102) || cleanAshareText(quoteData?.f128) || companyProfile?.regionName || null;
+    const industryName = cleanAshareText(quoteData?.f100) || cleanAshareText(quoteData?.f127) || null;
+    const regionName = cleanAshareText(quoteData?.f102) || cleanAshareText(quoteData?.f128) || null;
     const rawEpsTrailingTwelveMonths =
       toNumberOrNull(quoteData?.f112) ??
       (rawTrailingPE && rawTrailingPE > 0 ? Number((regularMarketPrice / rawTrailingPE).toFixed(2)) : null);
@@ -2582,25 +2581,12 @@ const fetchStockSnapshot = async (rawCode: string) => {
         }
         return null;
       })();
-    const operationsMetrics =
-      isPositiveMetric(rawTrailingPE) && isPositiveMetric(rawEpsTrailingTwelveMonths) && isPositiveMetric(rawPriceToBook)
-        ? null
-        : await fetchEastmoneyOperationsMetrics(code);
-    const trailingPE = isPositiveMetric(rawTrailingPE) ? rawTrailingPE : operationsMetrics?.peRatio ?? null;
+    const trailingPE = isPositiveMetric(rawTrailingPE) ? rawTrailingPE : null;
     const epsTrailingTwelveMonths =
       (isPositiveMetric(rawEpsTrailingTwelveMonths) ? rawEpsTrailingTwelveMonths : null) ??
-      operationsMetrics?.eps ??
       (trailingPE && trailingPE > 0 ? Number((regularMarketPrice / trailingPE).toFixed(2)) : null);
     const priceToBook =
-      (isPositiveMetric(rawPriceToBook) ? rawPriceToBook : null) ??
-      operationsMetrics?.priceToBook ??
-      (() => {
-        const bookValuePerShare = operationsMetrics?.bookValuePerShare;
-        if (bookValuePerShare && bookValuePerShare > 0) {
-          return Number((regularMarketPrice / bookValuePerShare).toFixed(2));
-        }
-        return null;
-      })();
+      (isPositiveMetric(rawPriceToBook) ? rawPriceToBook : null) ?? null;
     const conceptTags = String(quoteData?.f129 || '')
       .split(',')
       .map((item) => item.trim())
@@ -2652,8 +2638,8 @@ const fetchStockSnapshot = async (rawCode: string) => {
       boardName,
       industryName,
       regionName,
-      companySummary: companyProfile?.companySummary || null,
-      businessScope: companyProfile?.businessScope || null,
+      companySummary: null,
+      businessScope: null,
       conceptTags,
       comparisonGroupLabel: industryName || boardName,
       limitPercent,
@@ -2695,6 +2681,85 @@ const fetchStockSnapshot = async (rawCode: string) => {
 
   stockSnapshotInflight.set(code, snapshotPromise);
   return snapshotPromise;
+};
+
+const fetchStockEnrichment = async (rawCode: string) => {
+  const snapshot = await fetchStockSnapshot(rawCode);
+  const code = snapshot.code;
+  const now = Date.now();
+  const cachedDetails = stockEnrichmentCache.get(code);
+
+  if (cachedDetails && now - cachedDetails.updatedAt < ENRICHMENT_CACHE_TTL_MS) {
+    return cachedDetails.details;
+  }
+
+  const inflightDetails = stockEnrichmentInflight.get(code);
+  if (inflightDetails) {
+    return inflightDetails;
+  }
+
+  const detailPromise = (async () => {
+    const [companyProfile, operationsMetrics] = await Promise.all([
+      snapshot.companySummary && snapshot.businessScope && snapshot.industryName && snapshot.regionName
+        ? Promise.resolve(null)
+        : fetchEastmoneyCompanyProfile(code),
+      isPositiveMetric(snapshot.quote.trailingPE) &&
+      isPositiveMetric(snapshot.quote.epsTrailingTwelveMonths) &&
+      isPositiveMetric(snapshot.quote.priceToBook)
+        ? Promise.resolve(null)
+        : fetchEastmoneyOperationsMetrics(code),
+    ]);
+
+    const regularMarketPrice = snapshot.quote.regularMarketPrice;
+    const trailingPE = isPositiveMetric(snapshot.quote.trailingPE)
+      ? snapshot.quote.trailingPE
+      : operationsMetrics?.peRatio ?? null;
+    const epsTrailingTwelveMonths =
+      (isPositiveMetric(snapshot.quote.epsTrailingTwelveMonths) ? snapshot.quote.epsTrailingTwelveMonths : null) ??
+      operationsMetrics?.eps ??
+      (trailingPE && trailingPE > 0 ? Number((regularMarketPrice / trailingPE).toFixed(2)) : null);
+    const priceToBook =
+      (isPositiveMetric(snapshot.quote.priceToBook) ? snapshot.quote.priceToBook : null) ??
+      operationsMetrics?.priceToBook ??
+      (() => {
+        const bookValuePerShare = operationsMetrics?.bookValuePerShare;
+        if (bookValuePerShare && bookValuePerShare > 0) {
+          return Number((regularMarketPrice / bookValuePerShare).toFixed(2));
+        }
+        return null;
+      })();
+
+    const details = {
+      code,
+      industryName: snapshot.industryName || companyProfile?.industryName || null,
+      regionName: snapshot.regionName || companyProfile?.regionName || null,
+      companySummary: snapshot.companySummary || companyProfile?.companySummary || null,
+      businessScope: snapshot.businessScope || companyProfile?.businessScope || null,
+      peRatio: trailingPE,
+      eps: epsTrailingTwelveMonths,
+      priceToBook,
+      updatedAt: new Date().toISOString(),
+    };
+
+    stockEnrichmentCache.set(code, {
+      updatedAt: Date.now(),
+      details,
+    });
+
+    return details;
+  })()
+    .catch((error) => {
+      if (cachedDetails && now - cachedDetails.updatedAt < SNAPSHOT_STALE_TTL_MS) {
+        return cachedDetails.details;
+      }
+      throw error;
+    })
+    .finally(() => {
+      stockEnrichmentInflight.delete(code);
+    });
+
+  stockEnrichmentInflight.set(code, detailPromise);
+  return detailPromise;
 };
 
 router.get('/watchlist/:userId', async (req: Request, res: Response): Promise<void> => {
@@ -3028,13 +3093,34 @@ router.get('/:code', async (req: Request, res: Response): Promise<void> => {
         peRatio: quote.trailingPE,
         eps: quote.epsTrailingTwelveMonths,
         priceToBook: quote.priceToBook,
-        companySummary: snapshot.companySummary,
-        businessScope: snapshot.businessScope,
+        companySummary: null,
+        businessScope: null,
       },
     });
   } catch (error) {
     console.error('Stock Snapshot Error:', error);
     res.status(500).json({ error: 'Failed to fetch stock data' });
+  }
+});
+
+router.get('/:code/details', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { code } = req.params;
+
+    if (!code) {
+      res.status(400).json({ error: 'Stock code is required' });
+      return;
+    }
+
+    const details = await fetchStockEnrichment(code);
+
+    res.status(200).json({
+      success: true,
+      details,
+    });
+  } catch (error) {
+    console.error('Stock Detail Error:', error);
+    res.status(500).json({ error: 'Failed to fetch stock detail data' });
   }
 });
 

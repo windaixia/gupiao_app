@@ -339,6 +339,7 @@ export default function StockAnalysis() {
   const [eventRefreshLoading, setEventRefreshLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [chartMode, setChartMode] = useState<ChartMode>(() =>
     typeof window === 'undefined' ? 'intraday1m' : normalizeChartMode(window.localStorage.getItem(CHART_MODE_STORAGE_KEY)),
   );
@@ -510,6 +511,32 @@ export default function StockAnalysis() {
     }
   };
 
+  const fetchStockDetails = async (symbol: string) => {
+    setDetailsLoading(true);
+    try {
+      const response = await fetch(`/api/stock/${encodeURIComponent(symbol)}/details`);
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch stock details');
+      }
+
+      setStockData((previous: any) => {
+        if (!previous) return previous;
+        if (previous.code && data.details?.code && previous.code !== data.details.code) {
+          return previous;
+        }
+        return {
+          ...previous,
+          ...data.details,
+        };
+      });
+    } catch (error) {
+      console.error('Failed to fetch stock detail data', error);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
   const fetchStockData = async (symbol: string, silent = false) => {
     if (silent) {
       setRefreshing(true);
@@ -550,6 +577,9 @@ export default function StockAnalysis() {
       const resolvedSymbol = data.stock.code || symbol;
       void fetchAlerts(resolvedSymbol);
       void fetchWatchlistStatus(resolvedSymbol);
+      if (!silent) {
+        void fetchStockDetails(resolvedSymbol);
+      }
     } catch (error) {
       console.error('Failed to fetch stock data', error);
     } finally {
@@ -1723,6 +1753,11 @@ export default function StockAnalysis() {
               <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
                 <BookOpen className="h-5 w-5 text-indigo-500" /> 基本面分析
               </h3>
+              {detailsLoading && (
+                <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  正在补充公司资料与估值信息...
+                </div>
+              )}
               <div className="space-y-3 mb-4">
                 <div className="flex justify-between border-b border-slate-50 pb-2">
                   <span className="text-slate-500">市盈率 (P/E)</span>
