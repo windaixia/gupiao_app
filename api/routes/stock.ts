@@ -2743,7 +2743,9 @@ const fetchStockSnapshot = async (rawCode: string) => {
         toNumberOrNull(quoteData?.f170) ??
         (previousClose ? Number((((regularMarketPrice - previousClose) / previousClose) * 100).toFixed(2)) : 0),
       regularMarketVolume:
-        (toNumberOrNull(quoteData?.f47) ?? fallbackQuote?.regularMarketVolume ?? dailySeries[dailySeries.length - 1]?.volume ?? 0) * 100,
+        quoteData?.f47 != null
+          ? (toNumberOrNull(quoteData?.f47) ?? 0) * 100
+          : fallbackQuote?.regularMarketVolume ?? dailySeries[dailySeries.length - 1]?.volume ?? 0,
       marketCap: toNumberOrNull(quoteData?.f116) ?? toNumberOrNull(quoteData?.f117),
       regularMarketOpen: toNumberOrNull(quoteData?.f46) ?? fallbackQuote?.regularMarketOpen ?? dailySeries[dailySeries.length - 1]?.open,
       regularMarketDayHigh: toNumberOrNull(quoteData?.f44) ?? fallbackQuote?.regularMarketDayHigh ?? dailySeries[dailySeries.length - 1]?.high,
