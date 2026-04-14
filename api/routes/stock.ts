@@ -101,6 +101,7 @@ const stockSnapshotCache = new Map<string, { updatedAt: number; snapshot: any }>
 const stockSnapshotInflight = new Map<string, Promise<any>>();
 const stockEnrichmentCache = new Map<string, { updatedAt: number; details: any }>();
 const stockEnrichmentInflight = new Map<string, Promise<any>>();
+let homeMarketCache: { updatedAt: number; payload: any } | null = null;
 const stockCompanyProfileCache = new Map<string, { updatedAt: number; profile: any }>();
 const stockOperationsMetricsCache = new Map<string, { updatedAt: number; metrics: any }>();
 const stockFinancialReportCache = new Map<string, { updatedAt: number; reports: any[] }>();
@@ -108,6 +109,7 @@ const RESOLVED_INPUT_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const SNAPSHOT_CACHE_TTL_MS = 30 * 1000;
 const SNAPSHOT_STALE_TTL_MS = 10 * 60 * 1000;
 const ENRICHMENT_CACHE_TTL_MS = 30 * 60 * 1000;
+const HOME_MARKET_CACHE_TTL_MS = 60 * 1000;
 const COMPANY_PROFILE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const OPERATIONS_METRICS_CACHE_TTL_MS = 30 * 60 * 1000;
 const FINANCIAL_REPORT_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -140,6 +142,12 @@ const STOCK_NAME_ALIASES: Record<string, string> = {
   '紫金矿业': '601899.SS',
   '赛力斯': '601127.SS',
 };
+const HOME_MARKET_INDICES = [
+  { secid: '1.000001', name: '上证指数' },
+  { secid: '0.399001', name: '深证成指' },
+  { secid: '0.399006', name: '创业板指' },
+] as const;
+const HOME_HOT_STOCK_CODES = ['600519.SS', '300750.SZ', '000001.SZ', '601318.SS', '002594.SZ', '600036.SS'] as const;
 
 const isDirectSymbolInput = (value: string) =>
   /^([603]\d{5}|688\d{3}|[48]\d{5})(\.(SS|SZ|BJ))?$/i.test(value) ||
@@ -760,6 +768,49 @@ const resolveStockInput = async (rawInput: string) => {
   }
 
   throw new Error(`Unable to resolve stock input: ${rawInput}`);
+};
+
+const fetchHomeMarketData = async () => {
+  if (homeMarketCache && Date.now() - homeMarketCache.updatedAt < HOME_MARKET_CACHE_TTL_MS) {
+    return homeMarketCache.payload;
+  }
+
+  const overview = await Promise.all(
+    HOME_MARKET_INDICES.map(async (item) => {
+      const payload: any = await fetchEastmoneyJson(
+        `https://push2.eastmoney.com/api/qt/stock/get?secid=${item.secid}&fields=f43,f169,f170&ut=${EASTMONEY_UT}&invt=2&fltt=2`,
+        { retries: 0, timeoutMs: 1200 },
+      );
+      const data = payload?.data || {};
+      const value = toNumberOrNull(data.f43) ?? 0;
+      const change = toNumberOrNull(data.f169) ?? 0;
+      const percent = toNumberOrNull(data.f170) ?? 0;
+
+      return {
+        name: item.name,
+        value,
+        change,
+        percent,
+      };
+    }),
+  );
+
+  const hotStocks = await Promise.all(
+    HOME_HOT_STOCK_CODES.map(async (code) => {
+      const snapshot = await fetchStockSnapshot(code);
+      return {
+        code: snapshot.code,
+        name: findStockNameByCode(snapshot.code) || snapshot.quote.shortName || snapshot.code,
+        price: snapshot.quote.regularMarketPrice,
+        change: snapshot.quote.regularMarketChange,
+        percent: snapshot.quote.regularMarketChangePercent,
+      };
+    }),
+  );
+
+  const payload = { overview, hotStocks, updatedAt: new Date().toISOString() };
+  homeMarketCache = { updatedAt: Date.now(), payload };
+  return payload;
 };
 
 const extractPlainCode = (code: string) => code.split('.')[0];
@@ -3067,6 +3118,19 @@ router.get('/resolve', async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     console.error('Resolve Stock Error:', error);
     res.status(404).json({ error: '无法识别该股票代码或名称' });
+  }
+});
+
+router.get('/home', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const payload = await fetchHomeMarketData();
+    res.status(200).json({
+      success: true,
+      ...payload,
+    });
+  } catch (error) {
+    console.error('Home Market Error:', error);
+    res.status(500).json({ error: 'Failed to fetch home market data' });
   }
 });
 
