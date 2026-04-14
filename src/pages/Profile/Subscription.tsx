@@ -1,12 +1,70 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { Link } from 'react-router-dom';
-import { CreditCard, CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Copy, Crown, QrCode, ShieldCheck, Sparkles } from 'lucide-react';
+
+type PlanKey = 'free' | 'basic' | 'premium' | 'professional';
+type ChannelKey = 'wechat' | 'alipay' | 'manual';
+
+interface PlanDefinition {
+  key: PlanKey;
+  label: string;
+  priceMonthly: number;
+  aiDailyLimit: number | null;
+  watchlistLimit: number | null;
+  features: string[];
+}
+
+interface AiQuotaSummary {
+  plan: PlanKey;
+  planLabel: string;
+  dailyLimit: number | null;
+  usedToday: number;
+  remainingToday: number | null;
+  isUnlimited: boolean;
+  requiresUpgrade: boolean;
+  dateLabel: string;
+}
+
+interface PaymentOrder {
+  id: string;
+  order_no: string;
+  plan_type: PlanKey;
+  amount: number;
+  channel: ChannelKey;
+  status: string;
+  created_at: string;
+  note?: string | null;
+}
+
+const channelLabels: Record<ChannelKey, string> = {
+  wechat: '微信收款',
+  alipay: '支付宝收款',
+  manual: '人工转账',
+};
+
+const statusLabels: Record<string, string> = {
+  pending_review: '待审核',
+  paid: '已确认',
+  cancelled: '已取消',
+  rejected: '未通过',
+};
 
 export default function Subscription() {
   const { user, setUser } = useAuthStore();
   const [loading, setLoading] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [success, setSuccess] = useState('');
+  const [error, setError] = useState('');
+  const [selectedChannel, setSelectedChannel] = useState<ChannelKey>('wechat');
+  const [selectedPlan, setSelectedPlan] = useState<PlanKey>('premium');
+  const [payerName, setPayerName] = useState('');
+  const [note, setNote] = useState('');
+  const [plans, setPlans] = useState<PlanDefinition[]>([]);
+  const [aiQuota, setAiQuota] = useState<AiQuotaSummary | null>(null);
+  const [orders, setOrders] = useState<PaymentOrder[]>([]);
+  const [contacts, setContacts] = useState<{ wechat?: string; alipay?: string; note?: string }>({});
+  const [activePlan, setActivePlan] = useState<PlanKey>((user?.plan as PlanKey) || 'free');
 
   if (!user) {
     return (
@@ -17,104 +75,322 @@ export default function Subscription() {
     );
   }
 
-  const handleUpgrade = async (plan: string) => {
+  const selectedPlanDefinition = useMemo(
+    () => plans.find((item) => item.key === selectedPlan) || null,
+    [plans, selectedPlan],
+  );
+
+  const loadSummary = async () => {
+    setSummaryLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/subscription/summary?userId=${encodeURIComponent(user.id)}`);
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        setError(data.error || '加载会员信息失败');
+        return;
+      }
+
+      setPlans(data.plans || []);
+      setAiQuota(data.aiQuota || null);
+      setOrders(data.orders || []);
+      setContacts(data.contacts || {});
+      setActivePlan((data.user?.plan || user.plan || 'free') as PlanKey);
+      setUser({ ...user, ...(data.user || {}) });
+    } catch (requestError) {
+      console.error('Load subscription summary failed', requestError);
+      setError('会员信息加载失败，请稍后重试。');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  const handleCreateOrder = async (plan: PlanKey) => {
     setLoading(true);
     setSuccess('');
+    setError('');
     try {
-      const response = await fetch('/api/subscription/upgrade', {
+      const response = await fetch('/api/subscription/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, plan, paymentMethod: 'card_mock' })
+        body: JSON.stringify({
+          userId: user.id,
+          plan,
+          channel: selectedChannel,
+          payerName,
+          note,
+        }),
       });
       const data = await response.json();
-      if (data.success) {
-        setUser({ ...user, plan });
-        setSuccess(`成功升级到 ${plan === 'premium' ? '高级版' : '专业版'} 计划！`);
+      if (response.ok && data.success) {
+        setSuccess(
+          `订单 ${data.order.order_no} 已创建，请按页面提示完成${channelLabels[selectedChannel]}并等待人工确认开通。`,
+        );
+        setNote('');
+        await loadSummary();
+      } else {
+        setError(data.error || '创建订单失败，请稍后重试。');
       }
-    } catch (error) {
-      console.error('Upgrade failed', error);
+    } catch (requestError) {
+      console.error('Create order failed', requestError);
+      setError('创建订单失败，请稍后重试。');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleCopy = async (value?: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setSuccess('收款账号已复制，请在付款备注里填写订单号。');
+    } catch (copyError) {
+      console.error('Copy failed', copyError);
+      setError('复制失败，请手动记录收款账号。');
+    }
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="text-center mb-10">
-        <h1 className="text-3xl font-bold text-slate-900 mb-4">选择您的计划</h1>
-        <p className="text-slate-500">获取高级 AI 分析和无限制查询。</p>
-        
-        {success && (
-          <div className="mt-4 bg-green-50 text-green-600 p-3 rounded-lg inline-block font-medium">
-            <CheckCircle2 className="inline h-5 w-5 mr-2" />
-            {success}
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="rounded-3xl bg-slate-900 px-8 py-10 text-white shadow-lg">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-3">
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold tracking-wide text-blue-100">
+              <Crown className="h-4 w-4" />
+              收费能力已落地
+            </div>
+            <h1 className="text-3xl font-bold">会员中心与人工收款</h1>
+            <p className="max-w-2xl text-sm text-slate-200">
+              先用手动收款把收费闭环跑通：用户创建订单 {'->'} 按微信/支付宝付款 {'->'} 人工确认后开通会员。
+            </p>
           </div>
-        )}
+          <div className="rounded-2xl bg-white/10 p-5 text-sm leading-7">
+            <p>当前套餐：<span className="font-semibold">{aiQuota?.planLabel || activePlan}</span></p>
+            <p>
+              今日 AI 次数：
+              <span className="font-semibold">
+                {aiQuota?.isUnlimited ? '不限' : `${aiQuota?.usedToday || 0}/${aiQuota?.dailyLimit || 0}`}
+              </span>
+            </p>
+            <p>
+              剩余次数：
+              <span className="font-semibold">
+                {aiQuota?.isUnlimited ? '无限制' : aiQuota?.remainingToday ?? '--'}
+              </span>
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Free Plan */}
-        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 flex flex-col relative">
-          {user.plan === 'free' && (
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">当前计划</div>
-          )}
-          <h2 className="text-xl font-bold text-slate-900 mb-2">基础版</h2>
-          <div className="text-4xl font-bold text-slate-900 mb-6">¥0<span className="text-lg text-slate-500 font-normal">/月</span></div>
-          <ul className="space-y-3 mb-8 flex-grow">
-            <li className="flex items-center gap-2 text-slate-600"><CheckCircle2 className="h-5 w-5 text-green-500" /> 每日 3 次 AI 分析</li>
-            <li className="flex items-center gap-2 text-slate-600"><CheckCircle2 className="h-5 w-5 text-green-500" /> 基础市场概览</li>
-            <li className="flex items-center gap-2 text-slate-600"><CheckCircle2 className="h-5 w-5 text-green-500" /> 自选股 (最多 5 支)</li>
-          </ul>
-          <button 
-            disabled={user.plan === 'free'}
-            className="w-full py-3 rounded-xl font-medium border-2 border-slate-200 text-slate-600 disabled:opacity-50 disabled:bg-slate-50"
-          >
-            {user.plan === 'free' ? '当前' : '降级'}
-          </button>
+      {(success || error) && (
+        <div className={`rounded-2xl px-5 py-4 text-sm font-medium ${success ? 'border border-green-200 bg-green-50 text-green-700' : 'border border-red-200 bg-red-50 text-red-600'}`}>
+          {success || error}
+        </div>
+      )}
+
+      <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
+        <div className="space-y-6">
+          <div className="grid gap-6 md:grid-cols-3">
+            {plans.map((plan) => {
+              const isCurrent = activePlan === plan.key;
+              const highlighted = plan.key === 'premium';
+              return (
+                <div
+                  key={plan.key}
+                  className={`rounded-2xl border p-6 shadow-sm transition-colors ${
+                    highlighted ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-100 bg-white text-slate-900'
+                  }`}
+                >
+                  <div className="mb-4 flex items-start justify-between">
+                    <div>
+                      <h2 className="text-xl font-bold">{plan.label}</h2>
+                      <p className={`mt-1 text-sm ${highlighted ? 'text-blue-100' : 'text-slate-500'}`}>
+                        {plan.aiDailyLimit == null ? 'AI 分析不限次' : `每日 ${plan.aiDailyLimit} 次 AI 分析`}
+                      </p>
+                    </div>
+                    {isCurrent && (
+                      <span className={`rounded-full px-3 py-1 text-xs font-bold ${highlighted ? 'bg-yellow-300 text-yellow-900' : 'bg-blue-100 text-blue-700'}`}>
+                        当前
+                      </span>
+                    )}
+                  </div>
+                  <div className="mb-5 text-4xl font-bold">
+                    ¥{plan.priceMonthly}
+                    <span className={`ml-1 text-base font-normal ${highlighted ? 'text-blue-100' : 'text-slate-500'}`}>/月</span>
+                  </div>
+                  <ul className="space-y-3 text-sm">
+                    {plan.features.map((feature) => (
+                      <li key={feature} className="flex items-start gap-2">
+                        <CheckCircle2 className={`mt-0.5 h-4 w-4 shrink-0 ${highlighted ? 'text-blue-200' : 'text-green-500'}`} />
+                        <span>{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {plan.key !== 'free' && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlan(plan.key)}
+                      className={`mt-6 w-full rounded-xl px-4 py-3 font-medium transition-colors ${
+                        selectedPlan === plan.key
+                          ? highlighted
+                            ? 'bg-white text-blue-600'
+                            : 'bg-slate-900 text-white'
+                          : highlighted
+                            ? 'bg-blue-500 text-white hover:bg-blue-400'
+                            : 'border border-slate-200 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {selectedPlan === plan.key ? '已选此套餐' : '选择此套餐'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-center gap-3">
+              <QrCode className="h-6 w-6 text-blue-600" />
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">创建付款订单</h2>
+                <p className="text-sm text-slate-500">先生成订单号，再用微信/支付宝完成转账，最后人工审核开通。</p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              {(['wechat', 'alipay', 'manual'] as ChannelKey[]).map((channel) => (
+                <button
+                  key={channel}
+                  type="button"
+                  onClick={() => setSelectedChannel(channel)}
+                  className={`rounded-2xl border px-4 py-4 text-left transition-colors ${
+                    selectedChannel === channel
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+                  }`}
+                >
+                  <p className="font-semibold text-slate-900">{channelLabels[channel]}</p>
+                  <p className="mt-2 text-sm text-slate-500">
+                    {channel === 'wechat'
+                      ? '推荐微信转账，备注订单号。'
+                      : channel === 'alipay'
+                        ? '支持支付宝手动付款。'
+                        : '支持线下或人工沟通转账。'}
+                  </p>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-slate-700">付款人备注</span>
+                <input
+                  type="text"
+                  value={payerName}
+                  onChange={(event) => setPayerName(event.target.value)}
+                  placeholder="例如：张三 / 微信昵称"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-slate-700">补充说明</span>
+                <input
+                  type="text"
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="可填付款时间、转账尾号"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-dashed border-blue-200 bg-blue-50 p-5 text-sm text-blue-900">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold">当前将创建：{selectedPlanDefinition?.label || '--'}</p>
+                  <p className="mt-1 text-blue-700">金额：¥{selectedPlanDefinition?.priceMonthly ?? '--'} / 月</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(selectedChannel === 'wechat' ? contacts.wechat : contacts.alipay)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 font-medium text-blue-700 shadow-sm"
+                >
+                  <Copy className="h-4 w-4" />
+                  复制收款账号
+                </button>
+              </div>
+              <p>微信收款：{contacts.wechat || '待配置'}</p>
+              <p>支付宝收款：{contacts.alipay || '待配置'}</p>
+              <p className="text-blue-700">{contacts.note || '创建订单后请把订单号作为付款备注。'}</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleCreateOrder(selectedPlan)}
+              disabled={loading || selectedPlan === 'free'}
+              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Sparkles className="h-5 w-5" />
+              {loading ? '正在创建订单...' : '创建待付款订单'}
+            </button>
+          </div>
         </div>
 
-        {/* Premium Plan */}
-        <div className="bg-blue-600 p-8 rounded-2xl shadow-lg border border-blue-500 flex flex-col relative text-white transform md:-translate-y-4">
-          {user.plan === 'premium' && (
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">当前计划</div>
-          )}
-          <h2 className="text-xl font-bold mb-2">高级版</h2>
-          <div className="text-4xl font-bold mb-6">¥199<span className="text-lg text-blue-200 font-normal">/月</span></div>
-          <ul className="space-y-3 mb-8 flex-grow">
-            <li className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-blue-300" /> 无限制 AI 分析</li>
-            <li className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-blue-300" /> 高级技术指标</li>
-            <li className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-blue-300" /> 保存分析历史</li>
-            <li className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-blue-300" /> 无限制自选股</li>
-          </ul>
-          <button 
-            onClick={() => handleUpgrade('premium')}
-            disabled={loading || user.plan === 'premium'}
-            className="w-full py-3 rounded-xl font-bold bg-white text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-90 disabled:cursor-not-allowed"
-          >
-            {loading ? '处理中...' : user.plan === 'premium' ? '当前' : '升级到高级版'}
-          </button>
-        </div>
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-green-600" />
+              <h2 className="text-lg font-bold text-slate-900">今日额度</h2>
+            </div>
+            {summaryLoading ? (
+              <p className="text-sm text-slate-500">加载中...</p>
+            ) : (
+              <div className="space-y-3 text-sm">
+                <p className="text-slate-600">统计日期：{aiQuota?.dateLabel || '--'}</p>
+                <p className="text-slate-600">当前套餐：{aiQuota?.planLabel || '--'}</p>
+                <p className="text-slate-600">
+                  AI 分析：
+                  <span className="font-semibold text-slate-900">
+                    {aiQuota?.isUnlimited ? '不限次' : `${aiQuota?.usedToday || 0}/${aiQuota?.dailyLimit || 0}`}
+                  </span>
+                </p>
+                <p className="text-slate-600">
+                  剩余次数：
+                  <span className="font-semibold text-slate-900">
+                    {aiQuota?.isUnlimited ? '无限制' : aiQuota?.remainingToday ?? '--'}
+                  </span>
+                </p>
+              </div>
+            )}
+          </div>
 
-        {/* Pro Plan */}
-        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 flex flex-col relative">
-          {user.plan === 'professional' && (
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">当前计划</div>
-          )}
-          <h2 className="text-xl font-bold text-slate-900 mb-2">专业版</h2>
-          <div className="text-4xl font-bold text-slate-900 mb-6">¥599<span className="text-lg text-slate-500 font-normal">/月</span></div>
-          <ul className="space-y-3 mb-8 flex-grow">
-            <li className="flex items-center gap-2 text-slate-600"><CheckCircle2 className="h-5 w-5 text-green-500" /> 包含高级版所有功能</li>
-            <li className="flex items-center gap-2 text-slate-600"><CheckCircle2 className="h-5 w-5 text-green-500" /> 开放 API 访问</li>
-            <li className="flex items-center gap-2 text-slate-600"><CheckCircle2 className="h-5 w-5 text-green-500" /> 定制 PDF 报告</li>
-            <li className="flex items-center gap-2 text-slate-600"><CheckCircle2 className="h-5 w-5 text-green-500" /> 专属优先支持</li>
-          </ul>
-          <button 
-            onClick={() => handleUpgrade('professional')}
-            disabled={loading || user.plan === 'professional'}
-            className="w-full py-3 rounded-xl font-medium bg-slate-900 text-white hover:bg-slate-800 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
-          >
-            {loading ? '处理中...' : user.plan === 'professional' ? '当前' : '升级到专业版'}
-          </button>
+          <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-slate-900">最近订单</h2>
+            <div className="mt-4 space-y-3">
+              {orders.length === 0 ? (
+                <p className="text-sm text-slate-500">还没有付款订单，创建后会显示在这里。</p>
+              ) : (
+                orders.map((order) => (
+                  <div key={order.id} className="rounded-xl bg-slate-50 p-4 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold text-slate-900">{order.order_no}</p>
+                      <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700">
+                        {statusLabels[order.status] || order.status}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-slate-600">{channelLabels[order.channel]} / ¥{order.amount}</p>
+                    <p className="mt-1 text-slate-500">套餐：{order.plan_type}</p>
+                    <p className="mt-1 text-slate-500">{new Date(order.created_at).toLocaleString('zh-CN', { hour12: false })}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

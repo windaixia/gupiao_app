@@ -5,6 +5,7 @@ interface User {
   email: string;
   name?: string;
   plan?: string;
+  usageCount?: number;
 }
 
 interface AuthState {

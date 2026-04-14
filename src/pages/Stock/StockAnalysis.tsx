@@ -308,6 +308,13 @@ const KlineCrosshairLayer = ({ activeCoordinate, activePayload, offset, yAxisMap
 export default function StockAnalysis() {
   const { code } = useParams<{ code: string }>();
   const { user } = useAuthStore();
+  const [aiQuota, setAiQuota] = useState<{
+    planLabel?: string;
+    dailyLimit?: number | null;
+    usedToday?: number;
+    remainingToday?: number | null;
+    isUnlimited?: boolean;
+  } | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [stockData, setStockData] = useState<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -607,6 +614,7 @@ export default function StockAnalysis() {
         setAiReport(data.analysis);
         setAnalysisPerformance(data.performance || null);
         setEventSignals(data.analysis?.eventSignals || data.eventSignals || null);
+        setAiQuota(data.aiQuota || null);
         if (data.analysis?.intradayQuickComment) {
           setQuickComment({
             comment: data.analysis.intradayQuickComment,
@@ -616,6 +624,7 @@ export default function StockAnalysis() {
           });
         }
       } else {
+        setAiQuota(data.aiQuota || null);
         setAiError(data.error || 'AI 分析暂时不可用，请稍后重试。');
       }
     } catch (error) {
@@ -838,6 +847,21 @@ export default function StockAnalysis() {
               <Clock3 className="h-4 w-4" />
               最新更新时间：{new Date(lastUpdated).toLocaleString('zh-CN', { hour12: false })}
               {refreshing && <span className="text-blue-600">刷新中...</span>}
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <span className="rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700">
+                当前套餐：{aiQuota?.planLabel || (user?.plan ? `${user.plan} 计划` : '游客')}
+              </span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
+                {aiQuota?.isUnlimited
+                  ? 'AI 分析不限次'
+                  : `今日 AI：${aiQuota?.usedToday || 0}/${aiQuota?.dailyLimit || 3}，剩余 ${aiQuota?.remainingToday ?? 3} 次`}
+              </span>
+              {user && !aiQuota?.isUnlimited && (
+                <Link to="/subscription" className="text-blue-600 hover:text-blue-700 font-medium">
+                  升级会员解锁更多次数
+                </Link>
+              )}
             </div>
           </div>
 

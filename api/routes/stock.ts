@@ -4,6 +4,7 @@ import { supabase } from '../utils/supabase.js';
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import YahooFinance from 'yahoo-finance2';
+import { ensureAiAccess, ensureWatchlistAccess, getAiQuotaSummary } from '../utils/billing.js';
 
 dotenv.config();
 
@@ -2753,6 +2754,12 @@ router.post('/watchlist', async (req: Request, res: Response): Promise<void> => 
     }
 
     const normalizedCode = normalizeStockCode(stockCode);
+    const access = await ensureWatchlistAccess(userId, normalizedCode);
+    if (!access.allowed) {
+      res.status(access.status).json({ success: false, error: access.error });
+      return;
+    }
+
     const { data, error } = await supabase
       .from('watchlist')
       .upsert(
@@ -2876,6 +2883,16 @@ router.post('/analysis/event-refresh', async (req: Request, res: Response): Prom
       return;
     }
 
+    const access = await ensureAiAccess(userId);
+    if (!access.allowed) {
+      res.status(access.status).json({
+        success: false,
+        error: access.error,
+        aiQuota: access.aiQuota,
+      });
+      return;
+    }
+
     const snapshot = await fetchStockSnapshot(code);
     const enrichment = await fetchAnalysisEnrichment(snapshot);
     const latestAnalysis = await fetchLatestAnalysisReference(userId, snapshot.code);
@@ -2904,6 +2921,7 @@ router.post('/analysis/event-refresh', async (req: Request, res: Response): Prom
       triggered: true,
       analysis: result.analysisResult,
       performance: result.performance,
+      aiQuota: userId ? await getAiQuotaSummary(userId) : null,
       eventSignals,
       enrichment: {
         newsItems: result.enrichment.newsItems,
@@ -3029,6 +3047,16 @@ router.post('/analysis', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    const access = await ensureAiAccess(userId);
+    if (!access.allowed) {
+      res.status(access.status).json({
+        success: false,
+        error: access.error,
+        aiQuota: access.aiQuota,
+      });
+      return;
+    }
+
     const result = await generateStockAnalysis({
       code,
       dimensions,
@@ -3040,6 +3068,7 @@ router.post('/analysis', async (req: Request, res: Response): Promise<void> => {
       success: true,
       analysis: result.analysisResult,
       performance: result.performance,
+      aiQuota: userId ? await getAiQuotaSummary(userId) : null,
       enrichment: {
         newsItems: result.enrichment.newsItems,
         filingsDigest: result.enrichment.filingsDigest,

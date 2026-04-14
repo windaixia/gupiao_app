@@ -1,5 +1,17 @@
 import { Router, type Request, type Response } from 'express';
 import { supabase } from '../utils/supabase.js';
+import {
+  buildPlanCatalog,
+  createPendingPaymentOrder,
+  getActiveSubscription,
+  getAiQuotaSummary,
+  getBillingContacts,
+  getRecentPaymentOrders,
+  getUserProfile,
+  normalizeUserPlan,
+  type PaymentChannel,
+  type UserPlan,
+} from '../utils/billing.js';
 
 const router = Router();
 
@@ -36,6 +48,108 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Get Billing Summary
+ * GET /api/subscription/summary?userId=...
+ */
+router.get('/summary', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required' });
+      return;
+    }
+
+    const [user, subscription, aiQuota, orders] = await Promise.all([
+      getUserProfile(userId),
+      getActiveSubscription(userId),
+      getAiQuotaSummary(userId),
+      getRecentPaymentOrders(userId),
+    ]);
+
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        plan: normalizeUserPlan(user.plan),
+      },
+      subscription,
+      aiQuota,
+      orders,
+      plans: buildPlanCatalog(),
+      contacts: getBillingContacts(),
+    });
+  } catch (error) {
+    console.error('Billing summary error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Create Manual Order (pending review)
+ * POST /api/subscription/order
+ */
+router.post('/order', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId, plan, channel, payerName, note } = req.body as {
+      userId?: string;
+      plan?: UserPlan;
+      channel?: PaymentChannel;
+      payerName?: string;
+      note?: string;
+    };
+
+    if (!userId || !plan || !channel) {
+      res.status(400).json({ error: 'userId, plan, and channel are required' });
+      return;
+    }
+
+    if (!['basic', 'premium', 'professional'].includes(plan)) {
+      res.status(400).json({ error: 'Unsupported plan' });
+      return;
+    }
+
+    if (!['wechat', 'alipay', 'manual'].includes(channel)) {
+      res.status(400).json({ error: 'Unsupported channel' });
+      return;
+    }
+
+    const user = await getUserProfile(userId);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const created = await createPendingPaymentOrder({
+      userId,
+      plan,
+      channel,
+      payerName,
+      note,
+    });
+
+    res.status(201).json({
+      success: true,
+      ...created,
+    });
+  } catch (error) {
+    console.error('Create order error:', error);
+    res.status(500).json({
+      error:
+        error instanceof Error && error.message.includes('payment_orders table is missing')
+          ? '收费订单表尚未初始化，请先在 Supabase 执行 20260414_manual_billing.sql。'
+          : 'Internal server error',
+    });
   }
 });
 
