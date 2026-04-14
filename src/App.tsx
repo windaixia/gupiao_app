@@ -9,6 +9,7 @@ import Watchlist from "./pages/Profile/Watchlist";
 import Subscription from "./pages/Profile/Subscription";
 import Portfolio from "./pages/Profile/Portfolio";
 import ReviewCenter from "./pages/Profile/ReviewCenter";
+import MembershipAdmin from "./pages/Admin/MembershipAdmin";
 import AnalysisHistory from "./pages/Stock/AnalysisHistory";
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="profile" element={<Profile />} />
           <Route path="watchlist" element={<Watchlist />} />
           <Route path="subscription" element={<Subscription />} />
+          <Route path="admin/memberships" element={<MembershipAdmin />} />
           <Route path="portfolio" element={<Portfolio />} />
           <Route path="review-center" element={<ReviewCenter />} />
           <Route path="stock/:code/history" element={<AnalysisHistory />} />

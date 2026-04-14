@@ -1,9 +1,35 @@
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { Link } from 'react-router-dom';
-import { User, History, Star, CreditCard, Brain, Wallet } from 'lucide-react';
+import { User, History, Star, CreditCard, Brain, Wallet, ShieldCheck } from 'lucide-react';
+
+interface MembershipSummary {
+  planLabel: string;
+  expiresAt: string | null;
+  remainingDays: number | null;
+}
 
 export default function Profile() {
-  const { user, signOut } = useAuthStore();
+  const { user, signOut, setUser } = useAuthStore();
+  const [membership, setMembership] = useState<MembershipSummary | null>(null);
+
+  useEffect(() => {
+    const currentUser = user;
+    const loadSummary = async () => {
+      if (!currentUser?.id) return;
+      try {
+        const response = await fetch(`/api/subscription/summary?userId=${encodeURIComponent(currentUser.id)}`);
+        const data = await response.json();
+        if (response.ok && data.success) {
+          setMembership(data.membership || null);
+          setUser({ ...currentUser, ...(data.user || {}) });
+        }
+      } catch (error) {
+        console.error('Load membership summary failed', error);
+      }
+    };
+    void loadSummary();
+  }, [setUser, user?.id]);
 
   if (!user) {
     return (
@@ -32,8 +58,12 @@ export default function Profile() {
           </div>
           <div className="text-right">
             <span className="inline-block bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-bold uppercase tracking-wider">
-              {user.plan || 'free'} 计划
+              {membership?.planLabel || user.plan || 'free'} 计划
             </span>
+            <div className="mt-2 text-sm text-slate-500">
+              <p>剩余时长：{membership?.remainingDays != null ? `${membership.remainingDays} 天` : '未开通'}</p>
+              <p>到期时间：{membership?.expiresAt ? new Date(membership.expiresAt).toLocaleDateString('zh-CN') : '--'}</p>
+            </div>
             <div className="mt-2">
               <button onClick={() => signOut()} className="text-red-500 hover:text-red-600 text-sm font-medium">退出登录</button>
             </div>
@@ -70,6 +100,14 @@ export default function Profile() {
           <h3 className="text-lg font-bold text-slate-900 mb-1">订阅管理</h3>
           <p className="text-sm text-slate-500">升级套餐并管理计费。</p>
         </Link>
+
+        {user.isAdmin && (
+          <Link to="/admin/memberships" className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow group">
+            <ShieldCheck className="h-8 w-8 text-rose-500 mb-4 group-hover:scale-110 transition-transform" />
+            <h3 className="text-lg font-bold text-slate-900 mb-1">超级管理员</h3>
+            <p className="text-sm text-slate-500">审核订单、开通会员并管理到期时间。</p>
+          </Link>
+        )}
       </div>
     </div>
   );

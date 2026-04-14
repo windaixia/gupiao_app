@@ -26,6 +26,16 @@ interface AiQuotaSummary {
   dateLabel: string;
 }
 
+interface MembershipSummary {
+  plan: PlanKey;
+  planLabel: string;
+  isActive: boolean;
+  expiresAt: string | null;
+  startAt: string | null;
+  remainingDays: number | null;
+  subscriptionStatus: string;
+}
+
 interface PaymentOrder {
   id: string;
   order_no: string;
@@ -60,6 +70,7 @@ export default function Subscription() {
   const [note, setNote] = useState('');
   const [plans, setPlans] = useState<PlanDefinition[]>([]);
   const [aiQuota, setAiQuota] = useState<AiQuotaSummary | null>(null);
+  const [membership, setMembership] = useState<MembershipSummary | null>(null);
   const [orders, setOrders] = useState<PaymentOrder[]>([]);
   const [contacts, setContacts] = useState<{ qq?: string; note?: string }>({});
   const [activePlan, setActivePlan] = useState<PlanKey>((user?.plan as PlanKey) || 'free');
@@ -91,6 +102,7 @@ export default function Subscription() {
 
       setPlans(data.plans || []);
       setAiQuota(data.aiQuota || null);
+      setMembership(data.membership || null);
       setOrders(data.orders || []);
       setContacts(data.contacts || {});
       setActivePlan((data.user?.plan || user.plan || 'free') as PlanKey);
@@ -164,7 +176,19 @@ export default function Subscription() {
             </p>
           </div>
           <div className="rounded-2xl bg-white/10 p-5 text-sm leading-7">
-            <p>当前套餐：<span className="font-semibold">{aiQuota?.planLabel || activePlan}</span></p>
+            <p>当前套餐：<span className="font-semibold">{membership?.planLabel || aiQuota?.planLabel || activePlan}</span></p>
+            <p>
+              会员到期：
+              <span className="font-semibold">
+                {membership?.expiresAt ? new Date(membership.expiresAt).toLocaleString('zh-CN', { hour12: false }) : '未开通'}
+              </span>
+            </p>
+            <p>
+              剩余时长：
+              <span className="font-semibold">
+                {membership?.remainingDays != null ? `${membership.remainingDays} 天` : '未开通'}
+              </span>
+            </p>
             <p>
               今日 AI 次数：
               <span className="font-semibold">
@@ -343,7 +367,9 @@ export default function Subscription() {
             ) : (
               <div className="space-y-3 text-sm">
                 <p className="text-slate-600">统计日期：{aiQuota?.dateLabel || '--'}</p>
-                <p className="text-slate-600">当前套餐：{aiQuota?.planLabel || '--'}</p>
+                <p className="text-slate-600">当前套餐：{membership?.planLabel || aiQuota?.planLabel || '--'}</p>
+                <p className="text-slate-600">到期时间：{membership?.expiresAt ? new Date(membership.expiresAt).toLocaleString('zh-CN', { hour12: false }) : '未开通'}</p>
+                <p className="text-slate-600">剩余天数：{membership?.remainingDays != null ? `${membership.remainingDays} 天` : '未开通'}</p>
                 <p className="text-slate-600">
                   AI 分析：
                   <span className="font-semibold text-slate-900">

@@ -3,17 +3,35 @@ import { supabase } from '../utils/supabase.js';
 import {
   buildPlanCatalog,
   createPendingPaymentOrder,
-  getActiveSubscription,
+  getAdminDashboardData,
   getAiQuotaSummary,
   getBillingContacts,
+  getMembershipSummary,
   getRecentPaymentOrders,
   getUserProfile,
+  grantMembership,
+  isSuperAdminUser,
   normalizeUserPlan,
+  reviewPaymentOrder,
+  revokeMembership,
   type PaymentChannel,
   type UserPlan,
 } from '../utils/billing.js';
 
 const router = Router();
+
+const ensureAdminRequest = async (requesterId?: string) => {
+  if (!requesterId) {
+    return { ok: false, status: 400, error: 'requesterId is required' } as const;
+  }
+
+  const isAdmin = await isSuperAdminUser(requesterId);
+  if (!isAdmin) {
+    return { ok: false, status: 403, error: '仅超级管理员可执行此操作' } as const;
+  }
+
+  return { ok: true } as const;
+};
 
 /**
  * Get Subscription
@@ -63,11 +81,12 @@ router.get('/summary', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const [user, subscription, aiQuota, orders] = await Promise.all([
+    const [user, membership, aiQuota, orders, isAdmin] = await Promise.all([
       getUserProfile(userId),
-      getActiveSubscription(userId),
+      getMembershipSummary(userId),
       getAiQuotaSummary(userId),
       getRecentPaymentOrders(userId),
+      isSuperAdminUser(userId),
     ]);
 
     if (!user) {
@@ -82,8 +101,9 @@ router.get('/summary', async (req: Request, res: Response): Promise<void> => {
         email: user.email,
         name: user.name,
         plan: normalizeUserPlan(user.plan),
+        isAdmin,
       },
-      subscription,
+      membership,
       aiQuota,
       orders,
       plans: buildPlanCatalog(),
@@ -92,6 +112,95 @@ router.get('/summary', async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     console.error('Billing summary error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/admin/summary', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const requesterId = req.query.requesterId as string;
+    const auth = await ensureAdminRequest(requesterId);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: auth.error });
+      return;
+    }
+
+    const dashboard = await getAdminDashboardData();
+    res.json({
+      success: true,
+      ...dashboard,
+    });
+  } catch (error) {
+    console.error('Admin summary error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/admin/orders/:orderId/review', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const requesterId = req.body.requesterId as string | undefined;
+    const auth = await ensureAdminRequest(requesterId);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: auth.error });
+      return;
+    }
+
+    const { action, durationDays } = req.body as { action?: 'approve' | 'reject'; durationDays?: number };
+    if (!action || !['approve', 'reject'].includes(action)) {
+      res.status(400).json({ error: 'action must be approve or reject' });
+      return;
+    }
+
+    const result = await reviewPaymentOrder({
+      orderId: req.params.orderId,
+      action,
+      reviewerId: requesterId!,
+      durationDays: Number.isFinite(durationDays) && durationDays ? durationDays : 30,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Review payment order error:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+});
+
+router.post('/admin/users/:userId/membership', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const requesterId = req.body.requesterId as string | undefined;
+    const auth = await ensureAdminRequest(requesterId);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: auth.error });
+      return;
+    }
+
+    const { plan, durationDays = 30, action } = req.body as {
+      plan?: UserPlan;
+      durationDays?: number;
+      action?: 'grant' | 'revoke';
+    };
+
+    if (action === 'revoke') {
+      const membership = await revokeMembership(req.params.userId);
+      res.json({ success: true, membership });
+      return;
+    }
+
+    if (!plan || !['basic', 'premium'].includes(plan)) {
+      res.status(400).json({ error: 'plan must be basic or premium' });
+      return;
+    }
+
+    const membership = await grantMembership({
+      userId: req.params.userId,
+      plan,
+      durationDays: Number.isFinite(durationDays) && durationDays ? durationDays : 30,
+      source: `admin:${requesterId}`,
+    });
+
+    res.json({ success: true, membership });
+  } catch (error) {
+    console.error('Admin membership update error:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 });
 

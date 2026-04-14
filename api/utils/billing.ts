@@ -62,6 +62,21 @@ export const getBillingContacts = () => ({
     '创建订单后请添加站长 QQ，备注订单号并完成转账，人工确认后开通会员。',
 });
 
+const getSuperAdminEmails = () =>
+  String(process.env.SUPER_ADMIN_EMAILS || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+
+const getSuperAdminUserIds = () =>
+  String(process.env.SUPER_ADMIN_USER_IDS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+export const isSuperAdminEmail = (email?: string | null) =>
+  !!email && getSuperAdminEmails().includes(email.trim().toLowerCase());
+
 const getBeijingDayRange = () => {
   const now = Date.now();
   const beijingNow = new Date(now + BEIJING_OFFSET_MS);
@@ -108,6 +123,95 @@ export const getActiveSubscription = async (userId: string) => {
   return data;
 };
 
+export const isSuperAdminUser = async (userId?: string | null) => {
+  if (!userId) return false;
+  if (getSuperAdminUserIds().includes(userId)) return true;
+  const user = await getUserProfile(userId);
+  return !!user && isSuperAdminEmail(user.email);
+};
+
+const toDateOrNull = (value?: string | null) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const diffDaysCeil = (future?: string | null) => {
+  const end = toDateOrNull(future);
+  if (!end) return null;
+  return Math.max(0, Math.ceil((end.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+};
+
+export const syncMembershipState = async (userId: string) => {
+  const user = await getUserProfile(userId);
+  if (!user) return null;
+
+  const { data: subscriptions, error } = await supabase
+    .from('subscriptions')
+    .select('*')
+    .eq('user_id', userId)
+    .order('end_date', { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  const rows = subscriptions || [];
+  const now = Date.now();
+  const expiredActiveIds = rows
+    .filter((row) => row.status === 'active' && toDateOrNull(row.end_date)?.getTime() && toDateOrNull(row.end_date)!.getTime() <= now)
+    .map((row) => row.id);
+
+  if (expiredActiveIds.length > 0) {
+    await supabase
+      .from('subscriptions')
+      .update({ status: 'expired' })
+      .in('id', expiredActiveIds);
+  }
+
+  const activeSubscription =
+    rows.find((row) => {
+      if (row.status !== 'active') return false;
+      const endAt = toDateOrNull(row.end_date);
+      return !endAt || endAt.getTime() > now;
+    }) || null;
+
+  const normalizedPlan = activeSubscription ? normalizeUserPlan(activeSubscription.plan_type) : 'free';
+  if (normalizeUserPlan(user.plan) !== normalizedPlan) {
+    await supabase.from('users').update({ plan: normalizedPlan }).eq('id', userId);
+    user.plan = normalizedPlan;
+  }
+
+  return {
+    user: {
+      ...user,
+      plan: normalizedPlan,
+    },
+    activeSubscription,
+  };
+};
+
+export const getMembershipSummary = async (userId: string) => {
+  const synced = await syncMembershipState(userId);
+  if (!synced) return null;
+
+  const { user, activeSubscription } = synced;
+  const plan = normalizeUserPlan(user.plan);
+  const definition = getPlanDefinition(plan);
+  const expiresAt = activeSubscription?.end_date || null;
+  const remainingDays = diffDaysCeil(expiresAt);
+
+  return {
+    plan,
+    planLabel: definition.label,
+    isActive: plan !== 'free',
+    expiresAt,
+    startAt: activeSubscription?.start_date || null,
+    remainingDays,
+    subscriptionStatus: activeSubscription?.status || (plan === 'free' ? 'inactive' : 'active'),
+  };
+};
+
 const isMissingPaymentOrdersTable = (error: { code?: string; message?: string } | null) =>
   !!error && (error.code === '42P01' || error.message?.includes('payment_orders'));
 
@@ -148,12 +252,12 @@ export const getTodayAiUsageCount = async (userId: string) => {
 };
 
 export const getAiQuotaSummary = async (userId: string) => {
-  const user = await getUserProfile(userId);
-  if (!user) {
+  const membership = await getMembershipSummary(userId);
+  if (!membership) {
     return null;
   }
 
-  const plan = normalizeUserPlan(user.plan);
+  const plan = membership.plan;
   const definition = getPlanDefinition(plan);
   const usedToday = await getTodayAiUsageCount(userId);
   const remainingToday =
@@ -313,6 +417,198 @@ export const createPendingPaymentOrder = async ({
     contacts,
     planLabel: definition.label,
     channelLabel: PAYMENT_CHANNEL_LABELS[channel],
+  };
+};
+
+const addDays = (date: Date, days: number) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+
+export const grantMembership = async ({
+  userId,
+  plan,
+  durationDays = 30,
+  source,
+}: {
+  userId: string;
+  plan: UserPlan;
+  durationDays?: number;
+  source: string;
+}) => {
+  const synced = await syncMembershipState(userId);
+  if (!synced) {
+    throw new Error('User not found');
+  }
+
+  const currentActive = synced.activeSubscription;
+  const baseDate =
+    currentActive?.end_date && toDateOrNull(currentActive.end_date) && toDateOrNull(currentActive.end_date)!.getTime() > Date.now()
+      ? toDateOrNull(currentActive.end_date)!
+      : new Date();
+  const nextEndDate = addDays(baseDate, durationDays);
+
+  if (currentActive) {
+    const { error } = await supabase
+      .from('subscriptions')
+      .update({
+        plan_type: plan,
+        end_date: nextEndDate.toISOString(),
+        payment_info: {
+          ...(currentActive.payment_info || {}),
+          lastGrantSource: source,
+          durationDays,
+        },
+      })
+      .eq('id', currentActive.id);
+
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from('subscriptions').insert([
+      {
+        user_id: userId,
+        plan_type: plan,
+        status: 'active',
+        start_date: new Date().toISOString(),
+        end_date: nextEndDate.toISOString(),
+        payment_info: {
+          grantSource: source,
+          durationDays,
+        },
+      },
+    ]);
+
+    if (error) throw error;
+  }
+
+  await supabase.from('users').update({ plan }).eq('id', userId);
+  return getMembershipSummary(userId);
+};
+
+export const revokeMembership = async (userId: string) => {
+  await supabase
+    .from('subscriptions')
+    .update({ status: 'cancelled' })
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  await supabase.from('users').update({ plan: 'free' }).eq('id', userId);
+  return getMembershipSummary(userId);
+};
+
+export const reviewPaymentOrder = async ({
+  orderId,
+  action,
+  reviewerId,
+  durationDays = 30,
+}: {
+  orderId: string;
+  action: 'approve' | 'reject';
+  reviewerId: string;
+  durationDays?: number;
+}) => {
+  const { data: order, error } = await supabase
+    .from('payment_orders')
+    .select('*')
+    .eq('id', orderId)
+    .maybeSingle();
+
+  if (isMissingPaymentOrdersTable(error)) {
+    throw new Error('payment_orders table is missing. Please run migration 20260414_manual_billing.sql first.');
+  }
+  if (error) throw error;
+  if (!order) throw new Error('Order not found');
+
+  if (action === 'approve') {
+    const membership = await grantMembership({
+      userId: order.user_id,
+      plan: normalizeUserPlan(order.plan_type),
+      durationDays,
+      source: `payment_order:${order.order_no}:${reviewerId}`,
+    });
+
+    const { error: updateOrderError } = await supabase
+      .from('payment_orders')
+      .update({
+        status: 'paid',
+        paid_at: new Date().toISOString(),
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', orderId);
+    if (updateOrderError) throw updateOrderError;
+
+    return { orderId, action, membership };
+  }
+
+  const { error: rejectError } = await supabase
+    .from('payment_orders')
+    .update({
+      status: 'rejected',
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq('id', orderId);
+  if (rejectError) throw rejectError;
+
+  return { orderId, action, membership: await getMembershipSummary(order.user_id) };
+};
+
+export const getAdminDashboardData = async () => {
+  const { data: users, error: usersError } = await supabase
+    .from('users')
+    .select('id, email, name, plan, created_at')
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (usersError) throw usersError;
+
+  const { data: subscriptions, error: subscriptionsError } = await supabase
+    .from('subscriptions')
+    .select('*')
+    .order('end_date', { ascending: false })
+    .limit(400);
+
+  if (subscriptionsError) throw subscriptionsError;
+
+  const pendingOrders = await (async () => {
+    const { data, error } = await supabase
+      .from('payment_orders')
+      .select('*')
+      .eq('status', 'pending_review')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (isMissingPaymentOrdersTable(error)) return [];
+    if (error) throw error;
+    return data || [];
+  })();
+
+  const userMap = new Map((users || []).map((item) => [item.id, item]));
+  const activeSubscriptionMap = new Map<string, any>();
+  for (const row of subscriptions || []) {
+    const endAt = toDateOrNull(row.end_date);
+    if (row.status === 'active' && (!endAt || endAt.getTime() > Date.now()) && !activeSubscriptionMap.has(row.user_id)) {
+      activeSubscriptionMap.set(row.user_id, row);
+    }
+  }
+
+  return {
+    users:
+      (users || []).map((user) => {
+        const activeSubscription = activeSubscriptionMap.get(user.id) || null;
+        return {
+          ...user,
+          plan: normalizeUserPlan(user.plan),
+          membership: {
+            plan: activeSubscription ? normalizeUserPlan(activeSubscription.plan_type) : 'free',
+            expiresAt: activeSubscription?.end_date || null,
+            remainingDays: diffDaysCeil(activeSubscription?.end_date || null),
+            status: activeSubscription?.status || 'inactive',
+          },
+        };
+      }) || [],
+    pendingOrders: pendingOrders.map((order) => ({
+      ...order,
+      user: userMap.get(order.user_id) || null,
+    })),
   };
 };
 

@@ -6,6 +6,7 @@ interface User {
   name?: string;
   plan?: string;
   usageCount?: number;
+  isAdmin?: boolean;
 }
 
 interface AuthState {

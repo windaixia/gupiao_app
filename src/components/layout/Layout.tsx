@@ -31,6 +31,11 @@ export default function Layout() {
                     <Link to="/watchlist" className="hover:text-green-400 px-3 py-2 rounded-md text-sm font-medium transition-colors">
                       自选股
                     </Link>
+                    {user.isAdmin && (
+                      <Link to="/admin/memberships" className="hover:text-green-400 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        管理后台
+                      </Link>
+                    )}
                   </>
                 )}
               </nav>

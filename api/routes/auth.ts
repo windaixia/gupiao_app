@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { supabase } from '../utils/supabase.js';
+import { isSuperAdminEmail } from '../utils/billing.js';
 
 const router = Router();
 
@@ -51,7 +52,10 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
 
     res.status(201).json({
       success: true,
-      user: userData,
+      user: {
+        ...userData,
+        isAdmin: isSuperAdminEmail(userData?.email || email),
+      },
       session: authData.session,
     });
   } catch (error) {
@@ -96,7 +100,9 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
     res.status(200).json({
       success: true,
-      user: userData || { email: authData.user.email },
+      user: userData
+        ? { ...userData, isAdmin: isSuperAdminEmail(userData.email) }
+        : { email: authData.user.email, isAdmin: isSuperAdminEmail(authData.user.email) },
       session: authData.session,
     });
   } catch (error) {
